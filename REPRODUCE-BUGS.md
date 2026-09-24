@@ -1,8 +1,6 @@
 # Reproducing the three CAPIO bugs on unmodified upstream code
 
-This branch (`reproduce-capio-bugs`) builds CAPIO exactly as published upstream, pinned to
-commit `5a6097d34f4d7e4b764a89e293b220df630e46de`, with none of the three fixes applied. The
-`main` branch's `Dockerfile` applies three patches on top of this same commit; this one
+The `main` branch's `Dockerfile` applies three patches on top of this same commit; this one
 skips that step entirely — same clone, same commit, no `git apply`.
 
 The three bugs fixed on `main`:
