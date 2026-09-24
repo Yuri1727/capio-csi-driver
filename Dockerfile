@@ -16,19 +16,9 @@ ARG CAPIO_COMMIT=5a6097d34f4d7e4b764a89e293b220df630e46de
 RUN git clone https://github.com/High-Performance-IO/capio.git /src/capio \
     && cd /src/capio && git checkout ${CAPIO_COMMIT}
 
-# Local-only fixes, never upstreamed and never pushed to the CAPIO repository - applied
-# only to this build's copy of the source. See docs/ for the full writeup of each:
-#   - capio-concurrent-read-race: race on the shared file buffer when several readers of the
-#     same on_close file are woken together (docs/capio-concurrent-read-race.md)
-#   - capio-mpi-rank-hostname: rank_to_hostname never populated for remote ranks, which
-#     misroutes every remote read reply (docs/multinode-segfault-kubernetes-repro.md)
-#   - capio-remote-read-eof: remote read replies used the raw requested count instead of the
-#     already-computed, clamped bytes_read, so reads never saw EOF (same doc as above)
-COPY patches/ /tmp/patches/
-RUN cd /src/capio \
-    && git apply /tmp/patches/capio-concurrent-read-race.patch \
-    && git apply /tmp/patches/capio-mpi-rank-hostname.patch \
-    && git apply /tmp/patches/capio-remote-read-eof.patch
+# This branch deliberately builds CAPIO exactly as cloned above, with none of the
+# fixes described in REPRODUCE-BUGS.md applied - see that file for what each one
+# was and how to reproduce the problem it fixes against this image.
 
 WORKDIR /src/capio/build
 RUN cmake -DCMAKE_BUILD_TYPE=Release .. \
