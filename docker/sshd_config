@@ -1,0 +1,25 @@
+# sshd configuration for the MPIJob worker role.
+#
+# The MPI Operator's launcher reaches workers over SSH on port 2222, using the
+# keypair it generates and mounts at sshAuthMountPath (default /root/.ssh, which
+# matches this image since its containers run as root).
+#
+# The same mounted private key is reused as the sshd host key, which is what the
+# upstream mpi-operator example images do too - there is no separate host key to
+# distribute, and the key only ever lives inside the job's own pods.
+Port 2222
+HostKey /root/.ssh/id_rsa
+AuthorizedKeysFile /root/.ssh/authorized_keys
+
+PubkeyAuthentication yes
+PasswordAuthentication no
+PermitRootLogin prohibit-password
+
+# Files mounted from a Kubernetes secret do not have the ownership/permissions
+# sshd demands by default, and it would refuse the key without this.
+StrictModes no
+
+# The slim base image has no PAM configuration; without this sshd fails at startup.
+UsePAM no
+
+Subsystem sftp /usr/lib/openssh/sftp-server

@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: capio-producer-mn3r
+  namespace: capio-tesi-cona
+  labels:
+    role: capio-demo-mn3r
+spec:
+  restartPolicy: Never
+  hostIPC: true
+  hostPID: true
+  nodeSelector:
+    kubernetes.io/hostname: talos-worker-1
+  imagePullSecrets:
+    - name: ghcr-pull-secret
+  containers:
+    - name: producer
+      image: ghcr.io/yuri1727/capio-csi-driver:dev
+      imagePullPolicy: Always
+      command: ["sh", "-c"]
+      args:
+        - |
+          set -e
+          echo "producer: waiting for all 3 consumers to be up..."
+          sleep 15
+          echo "producer: writing shared.dat"
+          CAPIO_DIR=/capio CAPIO_WORKFLOW_NAME=mnode-3r-e2e CAPIO_APP_NAME=writer \
+            LD_PRELOAD=/usr/local/lib/libcapio_posix.so \
+            sh -c 'echo "hello 3-reader multinode test at $(date)" > /capio/shared.dat'
+          echo "producer: done"
+          sleep 3600
+      volumeMounts:
+        - name: shared
+          mountPath: /capio
+  volumes:
+    - name: shared
+      persistentVolumeClaim:
+        claimName: capio-shared-pvc-multinode-3r

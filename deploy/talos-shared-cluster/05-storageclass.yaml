@@ -1,0 +1,13 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: capio-tesi-cona
+provisioner: capio.csi.k8s.io
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+parameters:
+  workflowName: "demo"
+  producerStep: "writer"
+  consumerStep: "reader1,reader2,reader3"
+  files: "shared.dat"
+  commitRule: "on_close"

@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: capio-csi-node
+  namespace: capio-tesi-cona
+spec:
+  selector:
+    matchLabels:
+      app: capio-csi-node
+  template:
+    metadata:
+      labels:
+        app: capio-csi-node
+    spec:
+      # Needed for NodeUnstageVolume to clean up a workflow's leftover SHM
+      # segments on this node (rm -f /dev/shm/<workflow>*): without it,
+      # /dev/shm here would be this pod's own isolated one, not the node's.
+      hostIPC: true
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: node-driver-registrar
+          image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.12.0
+          args:
+            - "--csi-address=/csi/csi.sock"
+            - "--kubelet-registration-path=/var/lib/kubelet/plugins/capio.csi.k8s.io/csi.sock"
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+
+        - name: capio-csi-driver
+          image: ghcr.io/yuri1727/capio-csi-driver:dev
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+          args:
+            - "--endpoint=unix:///csi/csi.sock"
+            - "--nodeid=$(NODE_ID)"
+            - "--capio-root=/var/lib/capio/volumes"
+            - "--capio-server-bin=/usr/local/bin/capio_server"
+            - "-v=4"
+          env:
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: capio-root
+              mountPath: /var/lib/capio/volumes
+            - name: pods-mount-dir
+              mountPath: /var/lib/kubelet/pods
+              mountPropagation: Bidirectional
+
+      volumes:
+        - name: socket-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/capio.csi.k8s.io
+            type: DirectoryOrCreate
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry
+            type: DirectoryOrCreate
+        - name: pods-mount-dir
+          hostPath:
+            path: /var/lib/kubelet/pods
+            type: DirectoryOrCreate
+        - name: capio-root
+          hostPath:
+            path: /var/lib/capio/volumes
+            type: DirectoryOrCreate

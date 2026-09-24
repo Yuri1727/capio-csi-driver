@@ -1,0 +1,11 @@
+# Editor/IDE local state - never project content
+.obsidian/
+.vscode/
+.idea/
+
+# Go build artifacts
+/capio-csi-driver
+*.test
+
+# Local scratch files that have ended up here by accident before
+files_location_*.txt

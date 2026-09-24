@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: capio-csi-controller
+  namespace: capio-tesi-cona
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: capio-csi-controller
+  template:
+    metadata:
+      labels:
+        app: capio-csi-controller
+    spec:
+      serviceAccountName: capio-csi-controller-sa
+      nodeSelector:
+        kubernetes.io/hostname: talos-worker-1
+      hostIPC: true
+      hostPID: true
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: csi-provisioner
+          image: registry.k8s.io/sig-storage/csi-provisioner:v5.1.0
+          args:
+            - "--csi-address=/csi/csi.sock"
+            - "--feature-gates=Topology=false"
+            # Default (15s) is far too short for the nodeCount>1 path, which
+            # blocks CreateVolume until the MPIJob's pods are Running -
+            # measured at 30-45s depending on image pull. The single-node
+            # path still returns almost immediately, so this only affects
+            # how long a slow multi-node CreateVolume gets before the
+            # sidecar cancels the call and retries.
+            - "--timeout=120s"
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+
+        - name: capio-csi-driver
+          image: ghcr.io/yuri1727/capio-csi-driver:dev
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+          args:
+            - "--endpoint=unix:///csi/csi.sock"
+            - "--nodeid=$(NODE_ID)"
+            - "--capio-root=/var/lib/capio/volumes"
+            - "--capio-server-bin=/usr/local/bin/capio_server"
+            # For nodeCount>1 (MPIJob-backed) volumes only - see mpijob.go.
+            # Same image this container itself runs, since it already
+            # bundles capio_server, mpirun and sshd.
+            - "--mpi-image=ghcr.io/yuri1727/capio-csi-driver:dev"
+            - "--mpi-image-pull-secret=ghcr-pull-secret"
+            - "-v=4"
+          env:
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: capio-root
+              mountPath: /var/lib/capio/volumes
+
+      volumes:
+        - name: socket-dir
+          emptyDir: {}
+        - name: capio-root
+          hostPath:
+            path: /var/lib/capio/volumes
+            type: DirectoryOrCreate

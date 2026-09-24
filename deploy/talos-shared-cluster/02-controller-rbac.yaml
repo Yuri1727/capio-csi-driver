@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: capio-csi-controller-sa
+  namespace: capio-tesi-cona
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: capio-csi-provisioner-role
+rules:
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["list", "watch", "create", "update", "patch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["csinodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: capio-csi-provisioner-binding
+subjects:
+  - kind: ServiceAccount
+    name: capio-csi-controller-sa
+    namespace: capio-tesi-cona
+roleRef:
+  kind: ClusterRole
+  name: capio-csi-provisioner-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# Namespaced (not cluster-scoped) on purpose: the multi-node (nodeCount>1)
+# path only ever creates/reads/deletes MPIJobs and ConfigMaps in the
+# Controller's own namespace, never anyone else's - see mpijob.go.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: capio-csi-controller-mpijob-role
+  namespace: capio-tesi-cona
+rules:
+  - apiGroups: ["kubeflow.org"]
+    resources: ["mpijobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: capio-csi-controller-mpijob-binding
+  namespace: capio-tesi-cona
+subjects:
+  - kind: ServiceAccount
+    name: capio-csi-controller-sa
+    namespace: capio-tesi-cona
+roleRef:
+  kind: Role
+  name: capio-csi-controller-mpijob-role
+  apiGroup: rbac.authorization.k8s.io

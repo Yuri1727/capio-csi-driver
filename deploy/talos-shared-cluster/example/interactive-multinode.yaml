@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: capio-shell-worker1
+  namespace: capio-tesi-cona
+spec:
+  restartPolicy: Never
+  hostIPC: true
+  hostPID: true
+  nodeSelector:
+    kubernetes.io/hostname: talos-worker-1
+  imagePullSecrets:
+    - name: ghcr-pull-secret
+  containers:
+    - name: shell
+      image: ghcr.io/yuri1727/capio-csi-driver:dev
+      imagePullPolicy: Always
+      command: ["sleep", "infinity"]
+      volumeMounts:
+        - name: shared
+          mountPath: /capio
+  volumes:
+    - name: shared
+      persistentVolumeClaim:
+        claimName: capio-shared-pvc-multinode
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: capio-shell-worker2
+  namespace: capio-tesi-cona
+spec:
+  restartPolicy: Never
+  hostIPC: true
+  hostPID: true
+  nodeSelector:
+    kubernetes.io/hostname: talos-worker-2
+  imagePullSecrets:
+    - name: ghcr-pull-secret
+  containers:
+    - name: shell
+      image: ghcr.io/yuri1727/capio-csi-driver:dev
+      imagePullPolicy: Always
+      command: ["sleep", "infinity"]
+      volumeMounts:
+        - name: shared
+          mountPath: /capio
+  volumes:
+    - name: shared
+      persistentVolumeClaim:
+        claimName: capio-shared-pvc-multinode

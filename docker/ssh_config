@@ -1,0 +1,11 @@
+# ssh client configuration for the MPIJob launcher role.
+#
+# mpirun shells out to ssh to start ranks on the worker pods. Worker pods are
+# ephemeral and their host keys are generated per job, so host key checking is
+# pointless here and would only block startup.
+Host *
+    Port 2222
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    IdentityFile /root/.ssh/id_rsa
+    LogLevel ERROR
