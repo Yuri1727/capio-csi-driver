@@ -42,7 +42,7 @@ spec:
               mountPath: /csi
 
         - name: capio-csi-driver
-          image: ghcr.io/yuri1727/capio-csi-driver:v3.1
+          image: ghcr.io/yuri1727/capio-csi-driver:v3.2
           imagePullPolicy: Always
           securityContext:
             privileged: true
@@ -54,7 +54,7 @@ spec:
             # For nodeCount>1 (MPIJob-backed) volumes only - see mpijob.go.
             # Same image this container itself runs, since it already
             # bundles capio_server, mpirun and sshd.
-            - "--mpi-image=ghcr.io/yuri1727/capio-csi-driver:v3.1"
+            - "--mpi-image=ghcr.io/yuri1727/capio-csi-driver:v3.2"
             - "--mpi-image-pull-secret=ghcr-pull-secret"
             - "-v=4"
           env:

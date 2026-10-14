@@ -73,7 +73,12 @@ COPY docker/sshd_config /etc/ssh/sshd_config
 COPY docker/ssh_config /etc/ssh/ssh_config
 
 # sshd refuses to start without its privilege separation directory.
-RUN mkdir -p /run/sshd
+# Installing openssh-server also generates host keys under /etc/ssh; they are
+# never used (sshd_config points HostKey at the key mounted by the MPI
+# Operator) and would be the same in every copy of the published image, so
+# they are removed.
+RUN mkdir -p /run/sshd \
+    && rm -f /etc/ssh/ssh_host_*
 
 COPY --from=capio-builder /src/capio/build/capio/server/capio_server /usr/local/bin/capio_server
 COPY --from=capio-builder /out/lib/libcapio_posix.so /usr/local/lib/libcapio_posix.so

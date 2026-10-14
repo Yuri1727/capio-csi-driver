@@ -20,7 +20,7 @@ spec:
     - name: ghcr-pull-secret
   containers:
     - name: shell
-      image: ghcr.io/yuri1727/capio-csi-driver:v3.1
+      image: ghcr.io/yuri1727/capio-csi-driver:v3.2
       imagePullPolicy: Always
       command: ["sleep", "infinity"]
       volumeMounts:
@@ -53,7 +53,7 @@ spec:
     - name: ghcr-pull-secret
   containers:
     - name: shell
-      image: ghcr.io/yuri1727/capio-csi-driver:v3.1
+      image: ghcr.io/yuri1727/capio-csi-driver:v3.2
       imagePullPolicy: Always
       command: ["sleep", "infinity"]
       volumeMounts:
