@@ -11,28 +11,34 @@ RUN apt-get -o Acquire::ForceIPv4=true update \
     libopenmpi-dev openmpi-bin \
     && rm -rf /var/lib/apt/lists/*
 
-# Pinned to the commit validated during development.
-ARG CAPIO_COMMIT=5a6097d34f4d7e4b764a89e293b220df630e46de
+# Pinned to upstream master of 2026-10-11 ("Fix unbounded
+# files_created_by_producer growth", #252). It already contains the fixes
+# for the MPI rank-to-hostname routing and for the length of remote read
+# replies (upstream #223), so only one local patch is still needed.
+ARG CAPIO_COMMIT=c25790caff6c1d3268ee918924c4f1213b1dfea4
 RUN git clone https://github.com/High-Performance-IO/capio.git /src/capio \
     && cd /src/capio && git checkout ${CAPIO_COMMIT}
 
-# Local-only fixes, never upstreamed and never pushed to the CAPIO repository - applied
-# only to this build's copy of the source. See docs/ for the full writeup of each:
-#   - capio-concurrent-read-race: race on the shared file buffer when several readers of the
-#     same on_close file are woken together (docs/capio-concurrent-read-race.md)
-#   - capio-mpi-rank-hostname: rank_to_hostname never populated for remote ranks, which
-#     misroutes every remote read reply (docs/multinode-segfault-kubernetes-repro.md)
-#   - capio-remote-read-eof: remote read replies used the raw requested count instead of the
-#     already-computed, clamped bytes_read, so reads never saw EOF (same doc as above)
-COPY patches/ /tmp/patches/
+# Local-only fix, never upstreamed and never pushed to the CAPIO repository - applied only
+# to this build's copy of the source:
+#   - capio-concurrent-read-race: concurrent readers of the same file are served by
+#     copying the requested slice of the shared file buffer under the file's lock, instead
+#     of through the raw getBuffer() pointer, which a concurrent expandBuffer() can free.
+COPY patches/capio-concurrent-read-race.patch /tmp/patches/
 RUN cd /src/capio \
-    && git apply /tmp/patches/capio-concurrent-read-race.patch \
-    && git apply /tmp/patches/capio-mpi-rank-hostname.patch \
-    && git apply /tmp/patches/capio-remote-read-eof.patch
+    && git apply /tmp/patches/capio-concurrent-read-race.patch
 
 WORKDIR /src/capio/build
 RUN cmake -DCMAKE_BUILD_TYPE=Release .. \
     && cmake --build . -j"$(nproc)"
+
+# libcapio_posix.so and libsyscall_intercept.so.0 are symlinks in the build tree. Docker's
+# COPY follows them, but Kaniko (used to build this image in-cluster) copies the symlink
+# itself, leaving a dangling link in the runtime image. Resolve them here (cp -L) and copy
+# the real files from this directory instead.
+RUN mkdir -p /out/lib \
+    && cp -L capio/posix/libcapio_posix.so /out/lib/libcapio_posix.so \
+    && cp -L capio/posix/syscall_intercept/lib/libsyscall_intercept.so.0 /out/lib/libsyscall_intercept.so.0
 
 # Stage 2: compile the driver itself.
 FROM golang:1.25-bookworm AS driver-builder
@@ -70,8 +76,8 @@ COPY docker/ssh_config /etc/ssh/ssh_config
 RUN mkdir -p /run/sshd
 
 COPY --from=capio-builder /src/capio/build/capio/server/capio_server /usr/local/bin/capio_server
-COPY --from=capio-builder /src/capio/build/capio/posix/libcapio_posix.so /usr/local/lib/libcapio_posix.so
-COPY --from=capio-builder /src/capio/build/capio/posix/syscall_intercept/lib/libsyscall_intercept.so.0 /usr/local/lib/libsyscall_intercept.so.0
+COPY --from=capio-builder /out/lib/libcapio_posix.so /usr/local/lib/libcapio_posix.so
+COPY --from=capio-builder /out/lib/libsyscall_intercept.so.0 /usr/local/lib/libsyscall_intercept.so.0
 COPY --from=driver-builder /out/capio-csi-driver /usr/local/bin/capio-csi-driver
 
 RUN ldconfig

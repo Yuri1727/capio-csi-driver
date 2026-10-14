@@ -9,3 +9,14 @@
 
 # Local scratch files that have ended up here by accident before
 files_location_*.txt
+
+# Earlier image builds and CAPIO patches, superseded by the root
+# Dockerfile and patches/capio-concurrent-read-race.patch; kept locally only
+/patches-v2/
+/patches-v3/
+/patches/capio-mpi-rank-hostname.patch
+/patches/capio-remote-read-eof.patch
+
+# Local backups, documentation and study notes, not part of the repository
+/_backup-pre-topology/
+/docs/
