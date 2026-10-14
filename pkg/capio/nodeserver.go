@@ -2,9 +2,7 @@ package capio
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"os/exec"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc/codes"
@@ -14,10 +12,16 @@ import (
 
 // NodeGetInfo tells Kubernetes the identity of the node this instance of
 // the driver runs on. The Node service always runs as a DaemonSet, one pod
-// per node, so each replica reports a different nodeID.
+// per node, so each replica reports a different nodeID. The same name is
+// reported as this node's topology segment, which is what lets a
+// single-node volume's accessibility (see CreateVolume) be matched against
+// nodes by the scheduler.
 func (d *Driver) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
 	return &csi.NodeGetInfoResponse{
 		NodeId: d.nodeID,
+		AccessibleTopology: &csi.Topology{
+			Segments: map[string]string{TopologyNodeKey: d.nodeID},
+		},
 	}, nil
 }
 
@@ -93,12 +97,11 @@ func workflowNameSidecarFile(stagingPath string) string {
 // NodeUnstageVolume removes the staging directory NodeStageVolume created
 // and, since this is called exactly once per node when the last pod using
 // the volume there has gone (not once per pod), also cleans up the
-// workflow's leftover SHM segments on this node - the same manual cleanup
-// this project has needed by hand throughout development
-// (`rm -f /dev/shm/<workflow>* /dev/shm/sem.<workflow>*`, see
-// docs/capio-concurrent-read-race.md), now automatic. Requires hostIPC on
-// this DaemonSet so /dev/shm here is genuinely the node's, not this pod's
-// own isolated one.
+// workflow's leftover SHM segments on this node (see cleanWorkflowSHM).
+// Requires hostIPC on this DaemonSet so /dev/shm here is genuinely the
+// node's, not this pod's own isolated one. DeleteVolume (single-node) and
+// the worker pods' preStop hook (multi-node) run the same cleanup, for the
+// nodes where no client pod ever mounted the volume.
 func (d *Driver) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
 	stagingPath := req.GetStagingTargetPath()
 	if stagingPath == "" {
@@ -129,21 +132,6 @@ func (d *Driver) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolu
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
 
-// cleanWorkflowSHM removes every /dev/shm segment and named semaphore
-// belonging to workflowName. Shells out to sh -c with a glob instead of
-// os.ReadDir+filtering because CAPIO creates dozens of these per workflow
-// (one set per client tid, see the sample listing in
-// docs/capio-concurrent-read-race.md) and a glob expresses "all of them"
-// far more simply than reimplementing the matching logic.
-func cleanWorkflowSHM(workflowName string) error {
-	pattern := fmt.Sprintf("/dev/shm/%s* /dev/shm/sem.%s*", workflowName, workflowName)
-	cmd := exec.Command("sh", "-c", "rm -f "+pattern)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("rm -f %s: %w (output: %s)", pattern, err, out)
-	}
-	return nil
-}
-
 // NodePublishVolume bind-mounts the node-local staging directory
 // NodeStageVolume created onto the path kubelet gives us for this specific
 // pod. Injecting LD_PRELOAD/CAPIO_* into the workload container itself is
@@ -162,11 +150,11 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 		return nil, status.Error(codes.InvalidArgument, "staging target path is required")
 	}
 
-	mounted, err := isMountPoint(targetPath)
+	mounts, err := mountCount(targetPath)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to check target path %q: %v", targetPath, err)
 	}
-	if mounted {
+	if mounts > 0 {
 		// Already published: NodePublishVolume must be idempotent.
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
@@ -186,20 +174,18 @@ func (d *Driver) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublish
 		return nil, status.Error(codes.InvalidArgument, "target path is required")
 	}
 
-	mounted, err := isMountPoint(targetPath)
+	removed, err := unmountAll(targetPath)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to check target path %q: %v", targetPath, err)
-	}
-	if mounted {
-		if err := unmount(targetPath); err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to unmount %q: %v", targetPath, err)
-		}
+		return nil, status.Errorf(codes.Internal, "failed to unmount %q: %v", targetPath, err)
 	}
 
+	// Reporting success while the directory is still there would make
+	// kubelet stop retrying and leave the pod stuck in Terminating forever;
+	// an error makes it call NodeUnpublishVolume again.
 	if err := os.Remove(targetPath); err != nil && !os.IsNotExist(err) {
-		klog.Warningf("failed to remove target path %q after unmount: %v", targetPath, err)
+		return nil, status.Errorf(codes.Internal, "failed to remove target path %q after unmount: %v", targetPath, err)
 	}
 
-	klog.Infof("volume %q unpublished: %s", req.GetVolumeId(), targetPath)
+	klog.Infof("volume %q unpublished: %s (%d unmounts)", req.GetVolumeId(), targetPath, removed)
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }

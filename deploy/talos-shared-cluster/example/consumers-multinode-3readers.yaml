@@ -9,13 +9,19 @@ spec:
   restartPolicy: Never
   hostIPC: true
   hostPID: true
-  nodeSelector:
-    kubernetes.io/hostname: talos-worker-1
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              role: capio-demo-mn3r
+              component: producer
+          topologyKey: kubernetes.io/hostname
   imagePullSecrets:
     - name: ghcr-pull-secret
   containers:
     - name: consumer
-      image: ghcr.io/yuri1727/capio-csi-driver:dev
+      image: ghcr.io/yuri1727/capio-csi-driver:v3.1
       imagePullPolicy: Always
       command: ["sh", "-c"]
       args:
@@ -45,13 +51,19 @@ spec:
   restartPolicy: Never
   hostIPC: true
   hostPID: true
-  nodeSelector:
-    kubernetes.io/hostname: talos-worker-1
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              role: capio-demo-mn3r
+              component: producer
+          topologyKey: kubernetes.io/hostname
   imagePullSecrets:
     - name: ghcr-pull-secret
   containers:
     - name: consumer
-      image: ghcr.io/yuri1727/capio-csi-driver:dev
+      image: ghcr.io/yuri1727/capio-csi-driver:v3.1
       imagePullPolicy: Always
       command: ["sh", "-c"]
       args:
@@ -81,13 +93,19 @@ spec:
   restartPolicy: Never
   hostIPC: true
   hostPID: true
-  nodeSelector:
-    kubernetes.io/hostname: talos-worker-2
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              role: capio-demo-mn3r
+              component: producer
+          topologyKey: kubernetes.io/hostname
   imagePullSecrets:
     - name: ghcr-pull-secret
   containers:
     - name: consumer
-      image: ghcr.io/yuri1727/capio-csi-driver:dev
+      image: ghcr.io/yuri1727/capio-csi-driver:v3.1
       imagePullPolicy: Always
       command: ["sh", "-c"]
       args:

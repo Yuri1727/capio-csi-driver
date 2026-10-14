@@ -198,6 +198,17 @@ func buildMPIJob(namespace, volumeID, image string, imagePullSecret string, para
 								Command:         []string{"/usr/sbin/sshd"},
 								Args:            []string{"-De"},
 								Env:             []corev1.EnvVar{capioDirEnv},
+								// Deleting the volume deletes the MPIJob and with it this
+								// pod: remove the workflow's segments from this node's
+								// /dev/shm (hostIPC) before the container stops. The
+								// binary is the driver itself, bundled in the same image.
+								Lifecycle: &corev1.Lifecycle{
+									PreStop: &corev1.LifecycleHandler{
+										Exec: &corev1.ExecAction{
+											Command: []string{"/usr/local/bin/capio-csi-driver", CleanSHMArg, params.workflowName},
+										},
+									},
+								},
 								VolumeMounts: []corev1.VolumeMount{
 									{Name: capioDirVolume.Name, MountPath: FixedMountPath},
 									{Name: configVolume.Name, MountPath: "/etc/capio"},

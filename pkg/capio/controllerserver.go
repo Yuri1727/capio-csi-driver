@@ -77,6 +77,10 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		return nil, status.Errorf(codes.Internal, "failed to provision volume: %v", err)
 	}
 
+	// The volume's capio_server is a subprocess of this Controller, so the
+	// volume is only usable on the node this Controller runs on: declaring it
+	// here makes the external-provisioner put a matching nodeAffinity on the
+	// PV, and pods using it are scheduled onto this node automatically.
 	return &csi.CreateVolumeResponse{
 		Volume: &csi.Volume{
 			VolumeId:      v.id,
@@ -85,6 +89,9 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 				"capioDir":     v.dir,
 				"workflowName": v.workflowName,
 			},
+			AccessibleTopology: []*csi.Topology{{
+				Segments: map[string]string{TopologyNodeKey: d.nodeID},
+			}},
 		},
 	}, nil
 }

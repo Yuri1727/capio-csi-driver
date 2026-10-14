@@ -5,17 +5,16 @@ metadata:
   namespace: capio-tesi-cona
   labels:
     role: capio-demo-multinode
+    component: producer
 spec:
   restartPolicy: Never
   hostIPC: true
   hostPID: true
-  nodeSelector:
-    kubernetes.io/hostname: talos-worker-1
   imagePullSecrets:
     - name: ghcr-pull-secret
   containers:
     - name: producer
-      image: ghcr.io/yuri1727/capio-csi-driver:dev
+      image: ghcr.io/yuri1727/capio-csi-driver:v3.1
       imagePullPolicy: Always
       command: ["sh", "-c"]
       args:

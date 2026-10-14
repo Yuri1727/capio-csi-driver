@@ -1,19 +1,26 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: capio-shell-worker1
+  name: capio-shell-1
   namespace: capio-tesi-cona
+  labels:
+    role: capio-shell
 spec:
   restartPolicy: Never
   hostIPC: true
   hostPID: true
-  nodeSelector:
-    kubernetes.io/hostname: talos-worker-1
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              role: capio-shell
+          topologyKey: kubernetes.io/hostname
   imagePullSecrets:
     - name: ghcr-pull-secret
   containers:
     - name: shell
-      image: ghcr.io/yuri1727/capio-csi-driver:dev
+      image: ghcr.io/yuri1727/capio-csi-driver:v3.1
       imagePullPolicy: Always
       command: ["sleep", "infinity"]
       volumeMounts:
@@ -27,19 +34,26 @@ spec:
 apiVersion: v1
 kind: Pod
 metadata:
-  name: capio-shell-worker2
+  name: capio-shell-2
   namespace: capio-tesi-cona
+  labels:
+    role: capio-shell
 spec:
   restartPolicy: Never
   hostIPC: true
   hostPID: true
-  nodeSelector:
-    kubernetes.io/hostname: talos-worker-2
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              role: capio-shell
+          topologyKey: kubernetes.io/hostname
   imagePullSecrets:
     - name: ghcr-pull-secret
   containers:
     - name: shell
-      image: ghcr.io/yuri1727/capio-csi-driver:dev
+      image: ghcr.io/yuri1727/capio-csi-driver:v3.1
       imagePullPolicy: Always
       command: ["sleep", "infinity"]
       volumeMounts:

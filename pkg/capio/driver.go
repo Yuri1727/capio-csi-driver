@@ -27,6 +27,17 @@ const (
 
 	// DriverVersion is reported alongside DriverName.
 	DriverVersion = "0.1.0"
+
+	// TopologyNodeKey is the topology segment key this driver reports for
+	// every node (NodeGetInfo) and attaches to single-node volumes
+	// (CreateVolume). kubelet turns it into a label on each Node object, and
+	// the external-provisioner turns a volume's segment into the PV's
+	// nodeAffinity, so the scheduler places pods using a single-node volume
+	// on the node that runs its capio_server without any node name having to
+	// be written into a manifest. The key must stay outside the kubernetes.io
+	// and k8s.io domains: the NodeRestriction admission plugin forbids kubelet
+	// from setting node labels there, and plugin registration then fails.
+	TopologyNodeKey = "topology.capio.csi/node"
 )
 
 // Driver bundles the three CSI gRPC services (Identity, Controller, Node)

@@ -14,8 +14,10 @@ spec:
         app: capio-csi-controller
     spec:
       serviceAccountName: capio-csi-controller-sa
-      nodeSelector:
-        kubernetes.io/hostname: talos-worker-1
+      # No nodeSelector: the Controller may run on any schedulable node.
+      # Single-node volumes report that node as their topology (see
+      # TopologyNodeKey in driver.go), so pods using them follow it
+      # automatically through the PV's nodeAffinity.
       hostIPC: true
       hostPID: true
       imagePullSecrets:
@@ -25,7 +27,9 @@ spec:
           image: registry.k8s.io/sig-storage/csi-provisioner:v5.1.0
           args:
             - "--csi-address=/csi/csi.sock"
-            - "--feature-gates=Topology=false"
+            # Turns the AccessibleTopology returned by CreateVolume into the
+            # PV's nodeAffinity.
+            - "--feature-gates=Topology=true"
             # Default (15s) is far too short for the nodeCount>1 path, which
             # blocks CreateVolume until the MPIJob's pods are Running -
             # measured at 30-45s depending on image pull. The single-node
@@ -38,7 +42,7 @@ spec:
               mountPath: /csi
 
         - name: capio-csi-driver
-          image: ghcr.io/yuri1727/capio-csi-driver:dev
+          image: ghcr.io/yuri1727/capio-csi-driver:v3.1
           imagePullPolicy: Always
           securityContext:
             privileged: true
@@ -50,7 +54,7 @@ spec:
             # For nodeCount>1 (MPIJob-backed) volumes only - see mpijob.go.
             # Same image this container itself runs, since it already
             # bundles capio_server, mpirun and sshd.
-            - "--mpi-image=ghcr.io/yuri1727/capio-csi-driver:dev"
+            - "--mpi-image=ghcr.io/yuri1727/capio-csi-driver:v3.1"
             - "--mpi-image-pull-secret=ghcr-pull-secret"
             - "-v=4"
           env:

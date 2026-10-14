@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"k8s.io/klog/v2"
@@ -104,7 +105,9 @@ func (m *volumeManager) startServer(dataDir, cfgPath, logDir string) (*exec.Cmd,
 	// uses; since clients mount the volume at a path of their own choosing,
 	// the server is instead given a private view of dataDir at
 	// FixedMountPath (see server_wrapper.go).
-	cmd, err := execServerInNamespace(m.serverBinary, dataDir, []string{"-c", cfgPath, "--log-dir", logDir})
+	// capio_server's own stdout/stderr go to capio_server.out above; the
+	// --log-dir option it used to accept was removed upstream.
+	cmd, err := execServerInNamespace(m.serverBinary, dataDir, []string{"-c", cfgPath})
 	if err != nil {
 		logFile.Close()
 		return nil, err
@@ -138,6 +141,40 @@ func (m *volumeManager) get(id string) (*volume, bool) {
 
 // delete stops the capio_server for id and removes its data directory. Also
 // safe to retry: deleting an unknown id is a no-op, as CSI requires.
+// serverStopTimeout is how long stopServer waits for capio_server to exit
+// on SIGTERM before killing it.
+const serverStopTimeout = 10 * time.Second
+
+// stopServer asks capio_server to shut down with SIGTERM, which its signal
+// handler answers by removing its own shared memory objects before exiting,
+// and falls back to SIGKILL if it is still running after serverStopTimeout.
+// The cleanup that follows in delete still runs either way: it is what
+// removes the segments when the server could not clean up after itself.
+func stopServer(id string, cmd *exec.Cmd) {
+	done := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(done)
+	}()
+
+	pid := cmd.Process.Pid
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		klog.Warningf("failed to send SIGTERM to capio_server for volume %q (pid=%d): %v", id, pid, err)
+	}
+	select {
+	case <-done:
+		klog.Infof("capio_server for volume %q (pid=%d) stopped on SIGTERM", id, pid)
+		return
+	case <-time.After(serverStopTimeout):
+	}
+
+	klog.Warningf("capio_server for volume %q (pid=%d) still running after %s, sending SIGKILL", id, pid, serverStopTimeout)
+	if err := cmd.Process.Kill(); err != nil {
+		klog.Warningf("failed to kill capio_server for volume %q (pid=%d): %v", id, pid, err)
+	}
+	<-done
+}
+
 func (m *volumeManager) delete(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -148,10 +185,17 @@ func (m *volumeManager) delete(id string) error {
 	}
 
 	if v.cmd != nil && v.cmd.Process != nil {
-		if err := v.cmd.Process.Kill(); err != nil {
-			klog.Warningf("failed to kill capio_server for volume %q (pid=%d): %v", id, v.cmd.Process.Pid, err)
-		}
-		_ = v.cmd.Wait()
+		stopServer(id, v.cmd)
+	}
+
+	// NodeUnstageVolume only cleans up when a pod mounted the volume on this
+	// node; a volume deleted without ever being mounted would otherwise leave
+	// its segments behind, and a new volume with the same workflow name could
+	// not start its capio_server. capio_server has exited above, so nothing
+	// is using them any more; after a clean SIGTERM shutdown this normally
+	// finds nothing left to remove.
+	if err := cleanWorkflowSHM(v.workflowName); err != nil {
+		klog.Warningf("failed to clean up SHM for workflow %q: %v", v.workflowName, err)
 	}
 
 	volDir := filepath.Join(m.rootDir, id)

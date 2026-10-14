@@ -17,8 +17,10 @@ func (d *Driver) GetPluginInfo(ctx context.Context, req *csi.GetPluginInfoReques
 
 // GetPluginCapabilities declares which optional CSI features this driver
 // supports. CONTROLLER_SERVICE tells Kubernetes it can talk to our
-// Controller service at all; the other capabilities will be added as the
-// corresponding RPCs are implemented.
+// Controller service at all. VOLUME_ACCESSIBILITY_CONSTRAINTS tells it that
+// some volumes are only reachable from certain nodes: a single-node volume
+// is only usable on the node whose Controller runs its capio_server (see
+// TopologyNodeKey).
 func (d *Driver) GetPluginCapabilities(ctx context.Context, req *csi.GetPluginCapabilitiesRequest) (*csi.GetPluginCapabilitiesResponse, error) {
 	return &csi.GetPluginCapabilitiesResponse{
 		Capabilities: []*csi.PluginCapability{
@@ -26,6 +28,13 @@ func (d *Driver) GetPluginCapabilities(ctx context.Context, req *csi.GetPluginCa
 				Type: &csi.PluginCapability_Service_{
 					Service: &csi.PluginCapability_Service{
 						Type: csi.PluginCapability_Service_CONTROLLER_SERVICE,
+					},
+				},
+			},
+			{
+				Type: &csi.PluginCapability_Service_{
+					Service: &csi.PluginCapability_Service{
+						Type: csi.PluginCapability_Service_VOLUME_ACCESSIBILITY_CONSTRAINTS,
 					},
 				},
 			},

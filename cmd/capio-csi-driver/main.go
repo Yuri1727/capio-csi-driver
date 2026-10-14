@@ -32,6 +32,15 @@ func main() {
 		}
 		return
 	}
+	// Hidden entrypoint run as the preStop hook of multi-node worker pods
+	// (see pkg/capio/shm.go).
+	if len(os.Args) > 1 && os.Args[1] == capio.CleanSHMArg {
+		if err := capio.RunCleanSHM(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	klog.InitFlags(nil)
 	flag.Parse()
