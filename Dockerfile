@@ -14,19 +14,10 @@ RUN apt-get -o Acquire::ForceIPv4=true update \
 # Pinned to upstream master of 2026-10-11 ("Fix unbounded
 # files_created_by_producer growth", #252). It already contains the fixes
 # for the MPI rank-to-hostname routing and for the length of remote read
-# replies (upstream #223), so only one local patch is still needed.
+# replies (upstream #223), and is built as is, without local patches.
 ARG CAPIO_COMMIT=c25790caff6c1d3268ee918924c4f1213b1dfea4
 RUN git clone https://github.com/High-Performance-IO/capio.git /src/capio \
     && cd /src/capio && git checkout ${CAPIO_COMMIT}
-
-# Local-only fix, never upstreamed and never pushed to the CAPIO repository - applied only
-# to this build's copy of the source:
-#   - capio-concurrent-read-race: concurrent readers of the same file are served by
-#     copying the requested slice of the shared file buffer under the file's lock, instead
-#     of through the raw getBuffer() pointer, which a concurrent expandBuffer() can free.
-COPY patches/capio-concurrent-read-race.patch /tmp/patches/
-RUN cd /src/capio \
-    && git apply /tmp/patches/capio-concurrent-read-race.patch
 
 WORKDIR /src/capio/build
 RUN cmake -DCMAKE_BUILD_TYPE=Release .. \

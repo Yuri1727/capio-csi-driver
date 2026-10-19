@@ -21,7 +21,7 @@ spec:
     - name: ghcr-pull-secret
   containers:
     - name: consumer
-      image: ghcr.io/yuri1727/capio-csi-driver:v3.3
+      image: ghcr.io/yuri1727/capio-csi-driver:v3.4
       imagePullPolicy: Always
       command: ["sh", "-c"]
       args:
