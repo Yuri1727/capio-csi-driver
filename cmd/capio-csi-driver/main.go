@@ -22,16 +22,6 @@ var (
 )
 
 func main() {
-	// Hidden re-exec entrypoint used internally to start capio_server in a
-	// private mount namespace (see pkg/capio/server_wrapper.go). Checked
-	// before flag.Parse() since its arguments aren't driver flags.
-	if len(os.Args) > 1 && os.Args[1] == capio.ServerWrapperArg {
-		if err := capio.RunServerInNamespace(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
-	}
 	// Hidden entrypoint run as the preStop hook of multi-node worker pods
 	// (see pkg/capio/shm.go).
 	if len(os.Args) > 1 && os.Args[1] == capio.CleanSHMArg {

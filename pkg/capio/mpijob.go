@@ -134,7 +134,7 @@ func buildMPIJob(namespace, volumeID, image string, imagePullSecret string, para
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: sharedDiscoveryPVCName},
 		},
 	}
-	capioDirEnv := corev1.EnvVar{Name: "CAPIO_DIR", Value: FixedMountPath}
+	capioDirEnv := corev1.EnvVar{Name: "CAPIO_DIR", Value: params.capioDir}
 
 	launcherArgs := []string{
 		"--allow-run-as-root",
@@ -210,7 +210,7 @@ func buildMPIJob(namespace, volumeID, image string, imagePullSecret string, para
 									},
 								},
 								VolumeMounts: []corev1.VolumeMount{
-									{Name: capioDirVolume.Name, MountPath: FixedMountPath},
+									{Name: capioDirVolume.Name, MountPath: params.capioDir},
 									{Name: configVolume.Name, MountPath: "/etc/capio"},
 									{Name: sharedVolume.Name, MountPath: sharedDiscoveryMountPath},
 								},

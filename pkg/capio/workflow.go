@@ -3,6 +3,7 @@ package capio
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -46,6 +47,12 @@ type volumeParams struct {
 	files         []string
 	commitRule    string
 
+	// capioDir is the CAPIO_DIR every participant of this volume uses: the
+	// capio_server instance(s) and every client pod, which must mount the
+	// volume at this same path and set CAPIO_DIR to it. Defaults to
+	// DefaultCapioDir when the StorageClass doesn't set it.
+	capioDir string
+
 	// nodeCount is the number of MPI ranks (one per physical node) CAPIO's
 	// capio_server needs for this volume. 1 (the default when the parameter
 	// is absent) keeps the existing single-node behavior: capio_server runs
@@ -57,6 +64,40 @@ type volumeParams struct {
 
 const defaultCommitRule = "on_close"
 const defaultNodeCount = 1
+
+// DefaultCapioDir is the CAPIO_DIR used when a StorageClass doesn't set
+// capioDir, so manifests written before the parameter existed keep working.
+const DefaultCapioDir = "/capio"
+
+// reservedCapioDirs are paths capioDir may not be, nor be inside of. The
+// server side mounts the volume at capioDir inside the driver's container
+// (single-node) or a worker pod (multi-node), so it must not shadow system
+// directories those processes need, or paths the driver itself uses.
+var reservedCapioDirs = []string{
+	"/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/root",
+	"/run", "/sbin", "/sys", "/usr",
+	"/csi", "/var/lib/capio", sharedDiscoveryMountPath,
+}
+
+// validateCapioDir checks that dir is usable as CAPIO_DIR: an absolute,
+// already-clean path, other than "/" and outside reservedCapioDirs.
+func validateCapioDir(dir string) error {
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("%q is not an absolute path", dir)
+	}
+	if filepath.Clean(dir) != dir {
+		return fmt.Errorf("%q is not a clean path (expected %q)", dir, filepath.Clean(dir))
+	}
+	if dir == "/" {
+		return fmt.Errorf("%q cannot be the root directory", dir)
+	}
+	for _, r := range reservedCapioDirs {
+		if dir == r || strings.HasPrefix(dir, r+"/") {
+			return fmt.Errorf("%q is reserved (%s)", dir, r)
+		}
+	}
+	return nil
+}
 
 func splitCommaList(raw string) []string {
 	var out []string
@@ -95,6 +136,14 @@ func parseVolumeParams(params map[string]string) (*volumeParams, error) {
 	}
 	if p.commitRule == "" {
 		p.commitRule = defaultCommitRule
+	}
+
+	p.capioDir = get("capioDir")
+	if p.capioDir == "" {
+		p.capioDir = DefaultCapioDir
+	}
+	if err := validateCapioDir(p.capioDir); err != nil {
+		return nil, fmt.Errorf("invalid StorageClass parameter %q: %v", "capioDir", err)
 	}
 
 	p.nodeCount = defaultNodeCount

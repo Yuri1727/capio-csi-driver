@@ -9,26 +9,22 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// bindMount bind-mounts source onto target, creating target first if
-// needed. If readonly is set, the mount is remounted read-only right after
-// (the kernel doesn't support read-only bind mounts in a single syscall).
-func bindMount(source, target string, readonly bool) error {
+// tmpfsMountSize caps the per-pod tmpfs NodePublishVolume mounts. Data goes
+// through capio_server, not this directory, so it only ever holds what a
+// process writes there without the CAPIO library.
+const tmpfsMountSize = "16m"
+
+// tmpfsMount mounts a fresh tmpfs at target, creating target first if
+// needed, read-only if readonly is set.
+func tmpfsMount(target string, readonly bool) error {
 	if err := os.MkdirAll(target, 0o750); err != nil {
 		return err
 	}
-
-	if err := unix.Mount(source, target, "", unix.MS_BIND, ""); err != nil {
-		return err
-	}
-
+	var flags uintptr = unix.MS_NOSUID | unix.MS_NODEV
 	if readonly {
-		if err := unix.Mount("", target, "", unix.MS_BIND|unix.MS_REMOUNT|unix.MS_RDONLY, ""); err != nil {
-			_ = unix.Unmount(target, 0)
-			return err
-		}
+		flags |= unix.MS_RDONLY
 	}
-
-	return nil
+	return unix.Mount("tmpfs", target, "tmpfs", flags, "size="+tmpfsMountSize+",mode=0755")
 }
 
 // mountCount returns how many mounts are stacked at exactly target, read

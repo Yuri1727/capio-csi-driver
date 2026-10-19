@@ -31,7 +31,7 @@ spec:
               mountPath: /registration
 
         - name: capio-csi-driver
-          image: ghcr.io/yuri1727/capio-csi-driver:v3.2
+          image: ghcr.io/yuri1727/capio-csi-driver:v3.3
           imagePullPolicy: Always
           securityContext:
             privileged: true

@@ -16,8 +16,8 @@ const shmDir = "/dev/shm"
 // CleanSHMArg is the hidden argv[1] that tells main() to run RunCleanSHM
 // instead of the normal driver. It is the preStop hook of multi-node worker
 // pods (see buildMPIJob): their capio_server's segments live on the worker's
-// node, which neither the Controller nor, if no client pod ran there, any
-// Node service instance can reach.
+// node, which the Controller can't reach, and the worker is the one place
+// that knows when that server stops.
 const CleanSHMArg = "__clean_capio_shm"
 
 // cleanWorkflowSHM removes the shared memory objects and named semaphores

@@ -25,12 +25,22 @@ func (d *Driver) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (
 	}, nil
 }
 
-// NodeGetCapabilities declares which Node RPCs this driver supports.
-// STAGE_UNSTAGE_VOLUME makes kubelet call NodeStageVolume/NodeUnstageVolume
-// once per (volume, node) - the first/last pod using the volume there -
-// instead of only NodePublishVolume/NodeUnpublishVolume per pod. That's the
-// hook used to clean up the workflow's leftover SHM segments on this node
-// exactly once, instead of on every single pod's unpublish.
+// NodeGetCapabilities declares STAGE_UNSTAGE_VOLUME, although
+// NodeStageVolume and NodeUnstageVolume do nothing: the driver needs no
+// per-node preparation, but kubelet only cleans up its own per-volume staging
+// directory (.../plugins/kubernetes.io/csi/<driver>/<hash>/globalmount) when
+// the capability is declared. Since Kubernetes 1.34 kubelet no longer writes
+// the metadata file it needs to remove that directory for drivers without
+// it, so they leave one empty directory behind per volume and node.
+//
+// An earlier version used NodeUnstageVolume, called when the last pod using
+// the volume on a node goes away, to clean up the workflow's shared memory.
+// That was wrong: the segments belong to capio_server, which lives as long as
+// the volume (single-node) or its MPIJob (multi-node), not as long as the pods
+// using it. Cleaning them up there pulled the shared memory from under a
+// still-running server, and every pod that used the volume afterwards hung.
+// Cleanup now happens only where the server stops: DeleteVolume
+// (single-node) and the worker pods' preStop hook (multi-node).
 func (d *Driver) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
 	return &csi.NodeGetCapabilitiesResponse{
 		Capabilities: []*csi.NodeServiceCapability{
@@ -43,100 +53,44 @@ func (d *Driver) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCapabi
 	}, nil
 }
 
-// NodeStageVolume creates this node's local anchor directory for the
-// volume, at the staging path kubelet manages for us (one per node, shared
-// across every pod on this node that mounts the volume).
-//
-// This directory does not need to hold or share any of CAPIO's actual data
-// with wherever capio_server (local subprocess for a single-node volume, or
-// an MPIJob worker pod for a multi-node one) keeps its own view of
-// CAPIO_DIR - confirmed empirically: three separate pods on the same node,
-// each with its own unrelated empty directory bind-mounted at /capio, wrote
-// and read data through a fourth pod's capio_server correctly. All that
-// matters is that CAPIO_DIR resolves to the same string ("/capio", see
-// FixedMountPath) on every participant sharing the node's hostIPC/hostPID
-// namespaces - the actual I/O goes over POSIX shared memory, never through
-// this directory's real contents.
+// NodeStageVolume has nothing to prepare (see NodeGetCapabilities); kubelet
+// creates the staging directory itself before calling it.
 func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
 	if req.GetVolumeId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume id is required")
 	}
-	stagingPath := req.GetStagingTargetPath()
-	if stagingPath == "" {
+	if req.GetStagingTargetPath() == "" {
 		return nil, status.Error(codes.InvalidArgument, "staging target path is required")
 	}
-
-	if err := os.MkdirAll(stagingPath, 0o750); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to create staging directory %q: %v", stagingPath, err)
-	}
-
-	// NodeUnstageVolumeRequest (unlike this request) carries no
-	// VolumeContext, so workflowName - needed there to clean up this
-	// workflow's SHM - is stashed in a sidecar file next to the staging
-	// directory instead, the only piece of state that's guaranteed to still
-	// be around by the time NodeUnstageVolume runs.
-	if workflowName := req.GetVolumeContext()["workflowName"]; workflowName != "" {
-		if err := os.WriteFile(workflowNameSidecarFile(stagingPath), []byte(workflowName), 0o640); err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to record workflow name for %q: %v", stagingPath, err)
-		}
-	}
-
-	klog.Infof("volume %q staged at %s", req.GetVolumeId(), stagingPath)
 	return &csi.NodeStageVolumeResponse{}, nil
 }
 
-// workflowNameSidecarFile is where NodeStageVolume records the volume's
-// CAPIO workflow name, next to (not inside, to keep it out of what gets
-// bind-mounted into pods) the staging directory itself, so NodeUnstageVolume
-// can read it back despite NodeUnstageVolumeRequest not carrying
-// VolumeContext.
-func workflowNameSidecarFile(stagingPath string) string {
-	return stagingPath + ".workflow-name"
-}
-
-// NodeUnstageVolume removes the staging directory NodeStageVolume created
-// and, since this is called exactly once per node when the last pod using
-// the volume there has gone (not once per pod), also cleans up the
-// workflow's leftover SHM segments on this node (see cleanWorkflowSHM).
-// Requires hostIPC on this DaemonSet so /dev/shm here is genuinely the
-// node's, not this pod's own isolated one. DeleteVolume (single-node) and
-// the worker pods' preStop hook (multi-node) run the same cleanup, for the
-// nodes where no client pod ever mounted the volume.
+// NodeUnstageVolume has nothing to undo (see NodeGetCapabilities); kubelet
+// removes the staging directory itself afterwards. It must not touch the
+// workflow's shared memory, which still belongs to a running capio_server.
 func (d *Driver) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
-	stagingPath := req.GetStagingTargetPath()
-	if stagingPath == "" {
+	if req.GetVolumeId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume id is required")
+	}
+	if req.GetStagingTargetPath() == "" {
 		return nil, status.Error(codes.InvalidArgument, "staging target path is required")
 	}
-
-	sidecarFile := workflowNameSidecarFile(stagingPath)
-	if workflowNameBytes, err := os.ReadFile(sidecarFile); err == nil {
-		if workflowName := string(workflowNameBytes); workflowName != "" {
-			if err := cleanWorkflowSHM(workflowName); err != nil {
-				// Not fatal: a failed best-effort cleanup shouldn't block volume
-				// teardown, it just means next time's CreateVolume for a workflow
-				// of the same name might hit "SHM canary already exists" and need
-				// a manual cleanup, same as before this existed.
-				klog.Warningf("failed to clean up SHM for workflow %q: %v", workflowName, err)
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		klog.Warningf("failed to read workflow name sidecar %q: %v", sidecarFile, err)
-	}
-	_ = os.Remove(sidecarFile)
-
-	if err := os.RemoveAll(stagingPath); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to remove staging directory %q: %v", stagingPath, err)
-	}
-
-	klog.Infof("volume %q unstaged: %s", req.GetVolumeId(), stagingPath)
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
 
-// NodePublishVolume bind-mounts the node-local staging directory
-// NodeStageVolume created onto the path kubelet gives us for this specific
-// pod. Injecting LD_PRELOAD/CAPIO_* into the workload container itself is
-// left to the pod manifest, as decided when scoping the project: this
-// driver only takes care of exposing the directory.
+// NodePublishVolume gives the pod an empty directory at the path kubelet
+// asks for. The directory doesn't need to hold or share any of CAPIO's data:
+// clients reach capio_server over POSIX shared memory (hostIPC), and all
+// that matters is that the pod sees the volume at the StorageClass capioDir
+// and uses it as CAPIO_DIR - confirmed empirically: separate pods, each with
+// its own unrelated empty directory there, wrote and read data through the
+// same capio_server correctly. Injecting LD_PRELOAD/CAPIO_* into the
+// workload container itself is left to the pod manifest.
+//
+// The directory is a small tmpfs private to this pod, not a bind mount of
+// the staging directory: anything a process writes there without the CAPIO
+// library is discarded on unmount, so NodeUnpublishVolume can always remove
+// the target path afterwards.
 func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	if req.GetVolumeId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume id is required")
@@ -144,10 +98,6 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 	targetPath := req.GetTargetPath()
 	if targetPath == "" {
 		return nil, status.Error(codes.InvalidArgument, "target path is required")
-	}
-	stagingPath := req.GetStagingTargetPath()
-	if stagingPath == "" {
-		return nil, status.Error(codes.InvalidArgument, "staging target path is required")
 	}
 
 	mounts, err := mountCount(targetPath)
@@ -159,11 +109,11 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
 
-	if err := bindMount(stagingPath, targetPath, req.GetReadonly()); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to bind mount %q onto %q: %v", stagingPath, targetPath, err)
+	if err := tmpfsMount(targetPath, req.GetReadonly()); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to mount %q: %v", targetPath, err)
 	}
 
-	klog.Infof("volume %q published: %s -> %s", req.GetVolumeId(), stagingPath, targetPath)
+	klog.Infof("volume %q published: %s", req.GetVolumeId(), targetPath)
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 

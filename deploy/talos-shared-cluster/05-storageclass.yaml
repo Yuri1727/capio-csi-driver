@@ -11,3 +11,6 @@ parameters:
   consumerStep: "reader1,reader2,reader3"
   files: "shared.dat"
   commitRule: "on_close"
+  # Optional: the CAPIO_DIR of this volume, i.e. the path pods must mount it
+  # at and set CAPIO_DIR to. Defaults to /capio when omitted.
+  # capioDir: "/data/demo"

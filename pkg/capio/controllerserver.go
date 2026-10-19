@@ -86,7 +86,7 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 			VolumeId:      v.id,
 			CapacityBytes: v.capacity,
 			VolumeContext: map[string]string{
-				"capioDir":     v.dir,
+				"capioDir":     v.capioDir,
 				"workflowName": v.workflowName,
 			},
 			AccessibleTopology: []*csi.Topology{{
@@ -98,13 +98,9 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 
 // createMultiNodeVolume is CreateVolume's path for nodeCount>1: instead of a
 // local subprocess (volumeManager), it creates an MPIJob with one
-// capio_server per node (see mpijob.go). VolumeContext only needs
-// "workflowName" beyond what the single-node path sets - NodeStageVolume
-// creates its own node-local directory for "capioDir" rather than reusing
-// one from here, since (unlike the single-node Controller) there's no
-// single node whose filesystem every other node could see anyway; see
-// mpijob.go's doc comment on why capio_server no longer needs the
-// server_wrapper.go unshare trick in this path.
+// capio_server per node (see mpijob.go), each mounting its own directory at
+// capioDir. VolumeContext reports capioDir so users can read from the PV
+// which path clients must mount the volume at and use as CAPIO_DIR.
 func (d *Driver) createMultiNodeVolume(ctx context.Context, name string, capacity int64, params *volumeParams) (*csi.CreateVolumeResponse, error) {
 	clients, namespace, err := d.getK8sClients()
 	if err != nil {
@@ -121,6 +117,7 @@ func (d *Driver) createMultiNodeVolume(ctx context.Context, name string, capacit
 			VolumeId:      id,
 			CapacityBytes: capacity,
 			VolumeContext: map[string]string{
+				"capioDir":     params.capioDir,
 				"workflowName": params.workflowName,
 				"multiNode":    "true",
 			},
