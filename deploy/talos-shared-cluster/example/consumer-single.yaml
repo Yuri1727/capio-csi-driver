@@ -17,7 +17,7 @@ spec:
       command: ["sh", "-c"]
       args:
         - |
-          echo "consumer-1: waiting for shared.dat (blocks until the producer closes it)"
+          echo "consumer-1: waiting for shared.dat (blocks until the producer exits)"
           CAPIO_DIR=/capio CAPIO_WORKFLOW_NAME=demo-single CAPIO_APP_NAME=reader1 \
             LD_PRELOAD=/usr/local/lib/libcapio_posix.so \
             cat /capio/shared.dat

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -27,6 +28,7 @@ type workflowStep struct {
 type streamingRule struct {
 	Name      []string `json:"name"`
 	Committed string   `json:"committed"`
+	Mode      string   `json:"mode"`
 }
 
 // volumeParams is what a StorageClass is expected to set in `parameters`
@@ -34,18 +36,24 @@ type streamingRule struct {
 // names: every pod that wants to write sets CAPIO_APP_NAME to one of
 // producerSteps, every pod that wants to read to one of consumerSteps.
 //
-// CAPIO requires each concurrent reader (or writer) of the same file to use
-// a distinct step name — confirmed by testing: two processes sharing one
-// consumer step name for the same on_close file left one of them blocked
-// forever, since only one waiter gets woken up when the file commits. So a
-// StorageClass has to declare up front how many concurrent
-// producers/consumers it expects, one name each.
+// The examples declare one step name per concurrent producer/consumer. An
+// early test had one of two readers sharing a consumer step name stay
+// blocked on an on_close file; that test ran before pods shared the host PID
+// namespace, and once they do, two readers sharing a step name both get the
+// whole file (update with on_close and with on_termination), so the hang was
+// most likely two clients colliding on the same PID.
 type volumeParams struct {
 	workflowName  string
 	producerSteps []string
 	consumerSteps []string
 	files         []string
 	commitRule    string
+
+	// fireRule is the CAPIO-CL firing rule ("mode") of the files:
+	// "no_update" lets consumers read data while the producer is still
+	// writing it (streaming), "update" makes them wait until the file is
+	// committed.
+	fireRule string
 
 	// capioDir is the CAPIO_DIR every participant of this volume uses: the
 	// capio_server instance(s) and every client pod, which must mount the
@@ -63,7 +71,30 @@ type volumeParams struct {
 }
 
 const defaultCommitRule = "on_close"
+const defaultFireRule = "no_update"
 const defaultNodeCount = 1
+
+// commitRulePattern accepts the CAPIO-CL commit rules a file can use without
+// further parameters: on_close (committed at its first close), on_close:N
+// (at its N-th close) and on_termination (when the producer exits).
+// on_file is left out since it needs a list of file dependencies the
+// StorageClass parameters cannot express.
+var commitRulePattern = regexp.MustCompile(`^(on_close(:[1-9][0-9]*)?|on_termination)$`)
+
+// validateFileName checks that a file listed in the StorageClass is a clean
+// relative path that stays inside capioDir.
+func validateFileName(name string) error {
+	if filepath.IsAbs(name) {
+		return fmt.Errorf("%q is an absolute path, files are relative to capioDir", name)
+	}
+	if filepath.Clean(name) != name {
+		return fmt.Errorf("%q is not a clean path (expected %q)", name, filepath.Clean(name))
+	}
+	if name == "." || name == ".." || strings.HasPrefix(name, "../") {
+		return fmt.Errorf("%q points outside capioDir", name)
+	}
+	return nil
+}
 
 // DefaultCapioDir is the CAPIO_DIR used when a StorageClass doesn't set
 // capioDir, so manifests written before the parameter existed keep working.
@@ -120,6 +151,7 @@ func parseVolumeParams(params map[string]string) (*volumeParams, error) {
 		consumerSteps: splitCommaList(get("consumerStep")),
 		files:         splitCommaList(get("files")),
 		commitRule:    get("commitRule"),
+		fireRule:      get("fireRule"),
 	}
 
 	if p.workflowName == "" {
@@ -134,8 +166,22 @@ func parseVolumeParams(params map[string]string) (*volumeParams, error) {
 	if len(p.files) == 0 {
 		return nil, fmt.Errorf("missing required StorageClass parameter %q", "files")
 	}
+	for _, f := range p.files {
+		if err := validateFileName(f); err != nil {
+			return nil, fmt.Errorf("invalid StorageClass parameter %q: %v", "files", err)
+		}
+	}
 	if p.commitRule == "" {
 		p.commitRule = defaultCommitRule
+	}
+	if !commitRulePattern.MatchString(p.commitRule) {
+		return nil, fmt.Errorf("invalid StorageClass parameter %q: %q is not one of on_close, on_close:N, on_termination", "commitRule", p.commitRule)
+	}
+	if p.fireRule == "" {
+		p.fireRule = defaultFireRule
+	}
+	if p.fireRule != "no_update" && p.fireRule != "update" {
+		return nil, fmt.Errorf("invalid StorageClass parameter %q: %q is not one of no_update, update", "fireRule", p.fireRule)
 	}
 
 	p.capioDir = get("capioDir")
@@ -161,12 +207,24 @@ func parseVolumeParams(params map[string]string) (*volumeParams, error) {
 // buildWorkflowConfig turns volumeParams into the CAPIO-CL workflow used
 // for the volume: one step per declared producer, one per declared
 // consumer, all producing/consuming the same set of files.
+//
+// Files are written with their full path under capioDir. capio_server looks
+// up the rules of a file by the absolute path the clients use, and a
+// relative name in the configuration never matches it: the file would then
+// silently get CAPIO-CL's defaults (on_termination, update) instead of the
+// rules set in the StorageClass.
 func buildWorkflowConfig(p *volumeParams) workflowConfig {
-	streaming := make([]streamingRule, 0, len(p.files))
+	files := make([]string, 0, len(p.files))
 	for _, f := range p.files {
+		files = append(files, filepath.Join(p.capioDir, f))
+	}
+
+	streaming := make([]streamingRule, 0, len(files))
+	for _, f := range files {
 		streaming = append(streaming, streamingRule{
 			Name:      []string{f},
 			Committed: p.commitRule,
+			Mode:      p.fireRule,
 		})
 	}
 
@@ -175,14 +233,14 @@ func buildWorkflowConfig(p *volumeParams) workflowConfig {
 		steps = append(steps, workflowStep{
 			Name:         name,
 			InputStream:  []string{},
-			OutputStream: p.files,
+			OutputStream: files,
 			Streaming:    streaming,
 		})
 	}
 	for _, name := range p.consumerSteps {
 		steps = append(steps, workflowStep{
 			Name:         name,
-			InputStream:  p.files,
+			InputStream:  files,
 			OutputStream: []string{},
 		})
 	}

@@ -10,4 +10,14 @@ parameters:
   producerStep: "writer"
   consumerStep: "reader1"
   files: "shared.dat"
-  commitRule: "on_close"
+  # Commit rule: when a file counts as complete. on_close (default) = at its
+  # first close, on_close:N = at its N-th close, on_termination = when the
+  # producer process exits. Programs that reopen their output on stdout
+  # (dd of=..., a shell redirection) close the file once before writing, so
+  # with them on_close commits too early: use on_termination.
+  commitRule: "on_termination"
+  # Fire rule: no_update (default) lets consumers read while the producer is
+  # still writing (streaming); a consumer that starts before any data exists
+  # gets end of file. update makes consumers wait for the commit, as these
+  # examples need since their consumers start before the producer.
+  fireRule: "update"

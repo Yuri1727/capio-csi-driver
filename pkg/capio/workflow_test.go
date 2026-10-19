@@ -102,3 +102,105 @@ func TestBuildMPIJobCapioDir(t *testing.T) {
 		t.Errorf("worker does not mount the capio-dir volume at %q", "/data/sim")
 	}
 }
+
+func TestParseVolumeParamsRules(t *testing.T) {
+	with := func(extra map[string]string) map[string]string {
+		m := map[string]string{
+			"workflowName": "wf",
+			"producerStep": "writer",
+			"consumerStep": "reader1",
+			"files":        "shared.dat",
+		}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+
+	p, err := parseVolumeParams(with(nil))
+	if err != nil {
+		t.Fatalf("parseVolumeParams with defaults: %v", err)
+	}
+	if p.commitRule != "on_close" || p.fireRule != "no_update" {
+		t.Errorf("defaults = (%q, %q), want (on_close, no_update)", p.commitRule, p.fireRule)
+	}
+
+	cases := []struct {
+		key, value string
+		ok         bool
+	}{
+		{"commitRule", "on_close", true},
+		{"commitRule", "on_close:2", true},
+		{"commitRule", "on_close:10", true},
+		{"commitRule", "on_termination", true},
+		{"commitRule", "on_close:0", false},
+		{"commitRule", "on_close:", false},
+		{"commitRule", "on_file", false},
+		{"commitRule", "on_n_files", false},
+		{"commitRule", "onclose", false},
+		{"fireRule", "no_update", true},
+		{"fireRule", "update", true},
+		{"fireRule", "streaming", false},
+		{"fireRule", "NO_UPDATE", false},
+		{"files", "a.dat,b.dat", true},
+		{"files", "out/result.dat", true},
+		{"files", "/capio/shared.dat", false},
+		{"files", "../shared.dat", false},
+		{"files", "a/../../b.dat", false},
+		{"files", "./shared.dat", false},
+		{"files", "..", false},
+	}
+	for _, c := range cases {
+		_, err := parseVolumeParams(with(map[string]string{c.key: c.value}))
+		if (err == nil) != c.ok {
+			t.Errorf("%s=%q: error = %v, want ok=%v", c.key, c.value, err, c.ok)
+		}
+	}
+}
+
+func TestBuildWorkflowConfig(t *testing.T) {
+	p := &volumeParams{
+		workflowName:  "wf",
+		producerSteps: []string{"writer"},
+		consumerSteps: []string{"reader1", "reader2"},
+		files:         []string{"shared.dat", "out/result.dat"},
+		commitRule:    "on_termination",
+		fireRule:      "no_update",
+		capioDir:      "/data/sim",
+	}
+	cfg := buildWorkflowConfig(p)
+	want := []string{"/data/sim/shared.dat", "/data/sim/out/result.dat"}
+
+	equal := func(a, b []string) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		for i := range a {
+			if a[i] != b[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	if cfg.Name != "wf" || len(cfg.IOGraph) != 3 {
+		t.Fatalf("got name %q with %d steps, want wf with 3", cfg.Name, len(cfg.IOGraph))
+	}
+	writer := cfg.IOGraph[0]
+	if !equal(writer.OutputStream, want) {
+		t.Errorf("writer output_stream = %v, want %v", writer.OutputStream, want)
+	}
+	if len(writer.Streaming) != len(want) {
+		t.Fatalf("writer has %d streaming rules, want %d", len(writer.Streaming), len(want))
+	}
+	for i, r := range writer.Streaming {
+		if !equal(r.Name, want[i:i+1]) || r.Committed != "on_termination" || r.Mode != "no_update" {
+			t.Errorf("streaming rule %d = %+v", i, r)
+		}
+	}
+	for _, step := range cfg.IOGraph[1:] {
+		if !equal(step.InputStream, want) {
+			t.Errorf("%s input_stream = %v, want %v", step.Name, step.InputStream, want)
+		}
+	}
+}
